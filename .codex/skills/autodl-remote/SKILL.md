@@ -19,6 +19,20 @@ powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 -
 powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
   -Action Run -Command "pwd; nvidia-smi"
 
+# Start a detached long-running job with a unique remote log
+powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
+  -Action StartJob `
+  -SessionName <session> `
+  -WorkingDirectory /root/autodl-tmp/<project> `
+  -Command "/root/miniconda3/bin/python -u <script>"
+
+# Inspect whether a job is still running and tail its exact log
+powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
+  -Action JobStatus `
+  -SessionName <session> `
+  -LogPath <path-returned-by-StartJob> `
+  -TailLines 100
+
 # Upload a local file or directory
 powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
   -Action Upload -LocalPath <local-path> -RemotePath /root/autodl-tmp/
@@ -69,22 +83,39 @@ Before overwriting a remote file, inspect its destination. For large datasets or
 
 ## Run long experiments
 
-Do not leave training attached to the SSH process. Start it in a named `screen` session and redirect logs:
+Do not leave training attached to the SSH process or construct an ad hoc
+`screen` command. Use `StartJob`; it validates the paths and session name,
+refuses duplicate sessions and existing log files, starts a detached `screen`
+session, merges stdout/stderr into a unique remote log, and records timestamps
+and the final job exit code:
 
 ```powershell
-$remoteCommand = "screen -dmS <session> bash -lc 'cd /root/autodl-tmp/<project> && /root/miniconda3/bin/python <script> > <log> 2>&1'"
 powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
-  -Action Run -Command $remoteCommand
+  -Action StartJob `
+  -SessionName <session> `
+  -WorkingDirectory /root/autodl-tmp/<project> `
+  -Command "/root/miniconda3/bin/python -u <script>"
 ```
 
-Monitor without disturbing the job:
+Keep the actual workload in the foreground inside `screen`; do not add `&`,
+`nohup`, or another session manager to `-Command`. The wrapper sets
+`PYTHONUNBUFFERED=1`, but still prefer Python's `-u` option for immediately
+visible training logs.
 
-```text
-screen -ls
-tail -n 100 <log>
-nvidia-smi
-ps -eo pid,ppid,%cpu,%mem,etime,cmd --sort=-%cpu
+Capture the exact `__AUTODL_LOG_PATH__` returned by `StartJob`. Monitor without
+disturbing the job:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
+  -Action JobStatus `
+  -SessionName <session> `
+  -LogPath <path-returned-by-StartJob> `
+  -TailLines 100
 ```
+
+The log contains `__AUTODL_JOB_EXIT_CODE__=<code>` only after the workload
+finishes normally. If the instance is stopped or crashes, that footer may be
+absent; diagnose with `screen -ls`, the log tail, `nvidia-smi`, and `ps`.
 
 Stop a session or process only when the user explicitly asks, and target its exact name or PID.
 
