@@ -1,0 +1,4 @@
+interface:
+  display_name: "AutoDL Remote"
+  short_description: "Connect to AutoDL and run research workflows"
+  default_prompt: "Use $autodl-remote to connect to my AutoDL server and carry out this research task."
