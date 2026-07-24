@@ -12,6 +12,9 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')]
     [string]$SessionName,
 
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')]
+    [string]$ProjectName,
+
     [string]$WorkingDirectory = '/root/autodl-tmp',
 
     [string]$LogPath,
@@ -69,20 +72,6 @@ function ConvertTo-Utf8Base64 {
     return [Convert]::ToBase64String($bytes)
 }
 
-function Get-Sha256Hex {
-    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
-
-    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Value)
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $hash = $sha256.ComputeHash($bytes)
-        return ([BitConverter]::ToString($hash)).Replace('-', '').ToLowerInvariant()
-    }
-    finally {
-        $sha256.Dispose()
-    }
-}
-
 Require-Command -Name 'ssh'
 
 $sshOptions = @(
@@ -120,18 +109,23 @@ switch ($Action) {
     'StartJob' {
         Require-Value -Name 'Command' -Value $Command
         Require-Value -Name 'SessionName' -Value $SessionName
+        Require-Value -Name 'ProjectName' -Value $ProjectName
         Require-AbsoluteRemotePath -Name 'WorkingDirectory' -Value $WorkingDirectory
 
-        if ([string]::IsNullOrWhiteSpace($LogPath)) {
-            $runId = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
-            $LogPath = "$($WorkingDirectory.TrimEnd('/'))/logs/${SessionName}_$runId.log"
+        if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
+            throw '-LogPath may not be supplied for StartJob. The canonical remote log path is generated automatically.'
         }
-        Require-AbsoluteRemotePath -Name 'LogPath' -Value $LogPath
+
+        $canonicalLogRoot = '/root/autodl-tmp/logs'
+        $startedAtUtc = [DateTimeOffset]::UtcNow
+        $datePath = $startedAtUtc.ToString('yyyy/MM/dd', [System.Globalization.CultureInfo]::InvariantCulture)
+        $timestamp = $startedAtUtc.ToString("yyyyMMdd'T'HHmmssfff'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+        $runId = [Guid]::NewGuid().ToString('N')
+        $LogPath = "$canonicalLogRoot/$ProjectName/$datePath/${timestamp}_${SessionName}_${runId}.log"
 
         $commandBase64 = ConvertTo-Utf8Base64 -Value $Command
         $workingDirectoryBase64 = ConvertTo-Utf8Base64 -Value $WorkingDirectory
         $logPathBase64 = ConvertTo-Utf8Base64 -Value $LogPath
-        $commandSha256 = Get-Sha256Hex -Value $Command
 
         $jobScript = @'
 set +e
@@ -165,6 +159,8 @@ exit "$job_rc"
         $remoteScript = @'
 set -u
 session_name='__SESSION_NAME__'
+project_name='__PROJECT_NAME__'
+run_id='__RUN_ID__'
 working_dir="$(printf '%s' '__WORKING_DIRECTORY_BASE64__' | base64 -d)"
 log_path="$(printf '%s' '__LOG_PATH_BASE64__' | base64 -d)"
 job_script_base64='__JOB_SCRIPT_BASE64__'
@@ -208,9 +204,10 @@ fi
 
 {
     printf 'timestamp=%s\n' "$(date -Is)"
+    printf 'project=%s\n' "$project_name"
     printf 'session=%s\n' "$session_name"
+    printf 'run_id=%s\n' "$run_id"
     printf 'working_directory=%s\n' "$working_dir"
-    printf 'command_sha256=__COMMAND_SHA256__\n'
     printf '%s\n' '--- job output ---'
 } >"$log_path"
 
@@ -222,15 +219,18 @@ if [ "$launch_rc" -ne 0 ]; then
     exit "$launch_rc"
 fi
 
+printf '__AUTODL_PROJECT__=%s\n' "$project_name"
 printf '__AUTODL_SESSION__=%s\n' "$session_name"
+printf '__AUTODL_RUN_ID__=%s\n' "$run_id"
 printf '__AUTODL_LOG_PATH__=%s\n' "$log_path"
 printf '__AUTODL_LAUNCH_STATUS__=started\n'
 '@
         $remoteScript = $remoteScript.Replace('__SESSION_NAME__', $SessionName)
+        $remoteScript = $remoteScript.Replace('__PROJECT_NAME__', $ProjectName)
+        $remoteScript = $remoteScript.Replace('__RUN_ID__', $runId)
         $remoteScript = $remoteScript.Replace('__WORKING_DIRECTORY_BASE64__', $workingDirectoryBase64)
         $remoteScript = $remoteScript.Replace('__LOG_PATH_BASE64__', $logPathBase64)
         $remoteScript = $remoteScript.Replace('__JOB_SCRIPT_BASE64__', $jobScriptBase64)
-        $remoteScript = $remoteScript.Replace('__COMMAND_SHA256__', $commandSha256)
 
         $remoteScriptBase64 = ConvertTo-Utf8Base64 -Value $remoteScript
         $remoteLauncher = "printf '%s' '$remoteScriptBase64' | base64 -d | bash"

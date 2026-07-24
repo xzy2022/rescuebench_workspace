@@ -16,9 +16,20 @@ Do not duplicate the private key or password in the project. Treat hostname and 
 - Base Python: `/root/miniconda3/bin/python`
 - Base Conda: `/root/miniconda3/bin/conda`
 - TensorBoard log directory: `/root/tf-logs`
+- Run log root: `/root/autodl-tmp/logs`
 - Long-running jobs: named `screen` sessions with redirected logs
 
 Keep projects, environments, datasets, checkpoints, and outputs under `/root/autodl-tmp` to avoid filling the smaller system disk.
+
+`StartJob` stores stdout/stderr logs under the stable run-log root using:
+
+```text
+/root/autodl-tmp/logs/<project>/YYYY/MM/DD/<UTC timestamp>_<session>_<run ID>.log
+```
+
+Treat this root as the source of truth for future pre-shutdown inventory and
+local archival. Do not scatter managed run logs inside individual project
+directories.
 
 Suggested layout:
 

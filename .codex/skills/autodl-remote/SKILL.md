@@ -22,6 +22,7 @@ powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
 # Start a detached long-running job with a unique remote log
 powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
   -Action StartJob `
+  -ProjectName <project> `
   -SessionName <session> `
   -WorkingDirectory /root/autodl-tmp/<project> `
   -Command "/root/miniconda3/bin/python -u <script>"
@@ -92,10 +93,24 @@ and the final job exit code:
 ```powershell
 powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
   -Action StartJob `
+  -ProjectName <project> `
   -SessionName <session> `
   -WorkingDirectory /root/autodl-tmp/<project> `
   -Command "/root/miniconda3/bin/python -u <script>"
 ```
+
+`ProjectName` is required and must be a filesystem-safe short name. `StartJob`
+does not accept a caller-supplied `LogPath`; it always creates the canonical
+remote path:
+
+```text
+/root/autodl-tmp/logs/<project>/YYYY/MM/DD/<UTC timestamp>_<session>_<run ID>.log
+```
+
+The UTC timestamp keeps paths sortable and unambiguous. The random run ID makes
+repeated or simultaneous invocations unique without using the command or log
+contents in the filename. Keep `LogPath` only for `JobStatus`, using the exact
+path returned by `StartJob`.
 
 Keep the actual workload in the foreground inside `screen`; do not add `&`,
 `nohup`, or another session manager to `-Command`. The wrapper sets
@@ -126,7 +141,7 @@ Report:
 - whether passwordless connection succeeded;
 - the remote working directory used;
 - commands or transfers completed;
-- background session and log paths for long jobs;
+- project, run ID, background session, and log paths for long jobs;
 - GPU/process status when relevant;
 - any files or results the user should preserve before shutting down.
 
