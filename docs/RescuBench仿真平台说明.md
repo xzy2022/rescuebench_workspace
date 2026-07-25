@@ -40,8 +40,49 @@
 
 说明：
 - JSONL 数据同时提供`stretcher_loc`和`ambulance_loc`，但是两者是有一定空间距离差别的，实际评分只考虑担架，没有考虑救护车。
+- 上半程的伤员图像 ref_image 环境直接提供。下半程的担架图像并没有直接提供，而只有`stretcher_loc`坐标。一个合理的猜测是，测评平台希望模型自己根据空间记忆回到起点附近找到担架。
 
-### 状态机
+## 关键路径
+
+### 上半程人员图
+
+这些都是仿真器直接提供的，在云服务器上的搜索路径为：
+/root/autodl-tmp/rescue-nomad/repos/RescueBench/
+└── gym_rescue/envs/setting/ref_image/
+    └── <JSONL中的reference_image_path>
+
+### 下半程担架图
+
+官方没有直接给担架图。但是nomad似乎有明确的搜索机制，针对`/root/autodl-tmp/rescue-nomad/topomaps`，现在不清楚这个搜索机制是只有nomad有还是全部都有。
+<point_id>.png
+<point_id>.jpg
+level_<level>_<point_id>.png
+level_<level>_<point_id>.jpg
+<env>_level_<level>_<point_id>.png
+<env>_level_<level>_<point_id>.jpg
+<env>.png
+<env>.jpg
+
+## 拓扑地图
+
+创建拓扑地图的路径
+/root/autodl-tmp/rescue-nomad/topomaps/
+启动 NoMaD 时应该明确传入这样才能用上这个拓扑图：
+--topomap-dir /root/autodl-tmp/rescue-nomad/topomaps
+
+### 拓扑图的作用
+
+这是 RescueBench 适配器通用的部分。
+
+拓扑图的路径分为两大类：
+- `/root/autodl-tmp/rescue-nomad/topomaps/images/` 拓扑节点图
+- `/root/autodl-tmp/rescue-nomad/topomaps/UnrealRescue-*/images/` 拓扑节点图
+- `/root/autodl-tmp/rescue-nomad/topomaps/stretcher/` 担架语义目标图
+
+根据这个目录来看，拓扑图似乎是每个模型测评时直接生成的，那它们的依据是什么？不同模型的拓扑图内容相同吗？
+既然现在知道`stretcher/`下面是自己保存的担架目标图，那`images/`下面到底保存的图是什么类型的？
+
+## 状态机
 
 该状态机省略了回到前序状态的变化，也省了了超时的错误原因。
 ```mermaid
