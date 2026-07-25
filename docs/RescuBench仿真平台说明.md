@@ -41,6 +41,46 @@
 说明：
 - JSONL 数据同时提供`stretcher_loc`和`ambulance_loc`，但是两者是有一定空间距离差别的，实际评分只考虑担架，没有考虑救护车。
 
+### 状态机
+
+该状态机省略了回到前序状态的变化，也省了了超时的错误原因。
+```mermaid
+flowchart TB
+
+上半程
+    subgraph 上半程
+        NAVIGATE_TO_INJURED
+        RESCUE_INJURED
+    end
+
+开始-->NAVIGATE_TO_INJURED
+NAVIGATE_TO_INJURED-->RESCUE_INJURED
+
+下半程
+subgraph 下半程
+    NAVIGATE_TO_STRETCHER
+    PLACE_ON_STRETCHER
+end
+
+
+RESCUE_INJURED-->NAVIGATE_TO_STRETCHER
+NAVIGATE_TO_STRETCHER-->PLACE_ON_STRETCHER
+PLACE_ON_STRETCHER-->COMPLETED
+
+FAILED_REASON
+subgraph FAILED_REASON
+    CARRY_FAILED
+    DROP_FAILED
+    DROP_OUT_OF_RANGE
+end
+RESCUE_INJURED-->CARRY_FAILED
+PLACE_ON_STRETCHER-->DROP_FAILED
+PLACE_ON_STRETCHER-->DROP_OUT_OF_RANGE
+FAILED_REASON-->FAILED
+
+```
+
+
 ## 辅助操作机制
 
 对无原生交互能力的模型，RescueBench 在满足几何条件后代为触发交互动作；抱起和放下是否成功仍由仿真器反馈决定，不能保证。开门甚至缺少明确的成功反馈检查。
