@@ -3,7 +3,7 @@
 ID：DEP-001：ROS 消息依赖
 - 问题：`visualnav-transformer/deployment/src/utils.py` 顶层导入 `sensor_msgs.msg.Image`，未安装 ROS 时会阻断 RescueBench 加载 NoMaD。
 - 分析：RescueBench 只使用 `load_model`、`transform_images` 和 `to_numpy`；ROS 消息只用于官方机器人部署，不参与 Unreal 测评。
-- 解决：在分支 `codex/rescuebench-compat` 将 `sensor_msgs` 改为可选导入，并在真正调用 ROS 转换时明确报错。提交为 `df0cffb`；服务器不安装 ROS 或 `sensor_msgs`。
+- 解决：在分支 `codex/rescuebench-compat` 将 `sensor_msgs` 改为可选导入，并在真正调用 ROS 转换时明确报错。提交为 `df0cffb`(似乎并不存在，可能已废弃，或许实际是`dca79815b704e5aa9c6bdc3082351f9e3b2848c2`)；服务器不安装 ROS 或 `sensor_msgs`。
 - 可能风险：官方 `navigate.py`、`explore.py`、`create_topomap.py` 和 `joy_teleop.py` 仍需完整 ROS 环境；运行测评时必须包含上述兼容提交。
 
 

@@ -17,6 +17,7 @@ torchvision：
 ```
 
 克隆base环境到专有环境。
+已废弃(`PROJECT_ROOT=/root/autodl-tmp/rescue-nomad`这个地址需要根据情况修改)
 ```bash
 source /root/miniconda3/etc/profile.d/conda.sh
 
