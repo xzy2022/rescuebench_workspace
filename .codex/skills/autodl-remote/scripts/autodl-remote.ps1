@@ -7,6 +7,8 @@ param(
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
     [string]$Alias = 'autodl-t4',
 
+    [string]$SshConfigPath,
+
     [string]$Command,
 
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')]
@@ -30,6 +32,18 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($SshConfigPath)) {
+    $SshConfigPath = [System.IO.Path]::GetFullPath(
+        (Join-Path $PSScriptRoot '..\..\..\..\autodl-ssh.config')
+    )
+}
+
+if (-not (Test-Path -LiteralPath $SshConfigPath -PathType Leaf)) {
+    throw "Project SSH config was not found: $SshConfigPath"
+}
+
+$SshConfigPath = (Resolve-Path -LiteralPath $SshConfigPath).Path
 
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -75,6 +89,7 @@ function ConvertTo-Utf8Base64 {
 Require-Command -Name 'ssh'
 
 $sshOptions = @(
+    '-F', $SshConfigPath,
     '-o', 'BatchMode=yes',
     '-o', 'PreferredAuthentications=publickey',
     '-o', 'PasswordAuthentication=no',
@@ -84,9 +99,9 @@ $sshOptions = @(
     '-o', 'ServerAliveCountMax=3'
 )
 
-& ssh -G $Alias 2>$null | Out-Null
+& ssh '-F' $SshConfigPath '-G' $Alias 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    throw "SSH alias '$Alias' is not valid. Check the local SSH config."
+    throw "SSH alias '$Alias' is not valid in project config '$SshConfigPath'."
 }
 
 switch ($Action) {

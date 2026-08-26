@@ -1,11 +1,17 @@
 ---
 name: autodl-remote
-description: Connect to and operate the user's AutoDL GPU server through the existing passwordless SSH alias autodl-t4. Use when Codex needs to log in to AutoDL, inspect the GPU or environment, execute remote commands and scripts, upload or download project files, launch and monitor research jobs, inspect logs, manage experiments, or troubleshoot an existing AutoDL connection.
+description: Connect to and operate the user's AutoDL GPU server through the project-managed passwordless SSH configuration and alias autodl-t4. Use when Codex needs to log in to AutoDL, inspect the GPU or environment, execute remote commands and scripts, upload or download project files, launch and monitor research jobs, inspect logs, manage experiments, or troubleshoot an existing AutoDL connection.
 ---
 
 # AutoDL Remote
 
-Operate the configured AutoDL instance directly. Assume `ssh autodl-t4` and its dedicated private key already exist; do not regenerate keys or repeat public-key setup.
+Operate the configured AutoDL instance directly. The project-root `autodl-ssh.config` is the source of truth for the `autodl-t4` endpoint and dedicated private-key path. Do not regenerate keys or repeat public-key setup.
+
+## Maintain the current endpoint
+
+Before connecting to a newly created instance, update only `HostName` and `Port` in the project-root `autodl-ssh.config` from the current AutoDL console SSH command. Never store a password or private-key contents in that file. The actual config is local-only; `autodl-ssh.config.example` is the versioned template.
+
+The wrapper uses the project config by default. Pass `-SshConfigPath <path>` only when the user explicitly chooses a different OpenSSH config file.
 
 ## Use the bundled command wrapper
 
@@ -53,7 +59,7 @@ The wrapper enforces public-key-only authentication. Never pass or store an SSH 
 4. Keep work under `/root/autodl-tmp` unless the user explicitly chooses another location.
 5. Preserve unrelated remote work and running processes.
 
-If `Probe` fails, inspect `ssh -G autodl-t4` and `ssh -vvv autodl-t4 "exit"`. Report the failure. Do not regenerate or replace keys unless the user explicitly asks to repair authentication.
+If `Probe` fails, inspect `ssh -F <project-root>\autodl-ssh.config -G autodl-t4` and `ssh -F <project-root>\autodl-ssh.config -vvv autodl-t4 "exit"`. Report the failure. Do not regenerate or replace keys unless the user explicitly asks to repair authentication.
 
 ## Execute research commands
 

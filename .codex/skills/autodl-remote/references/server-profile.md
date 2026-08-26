@@ -3,11 +3,12 @@
 ## Connection
 
 - SSH alias: `autodl-t4`
-- Human interactive command: `ssh autodl-t4`
-- Authentication: dedicated local ED25519 key through `~/.ssh/config`
-- Source of truth for endpoint, port, user, and key path: `ssh -G autodl-t4`
+- Project SSH config: `<project-root>\autodl-ssh.config`
+- Human interactive command: `ssh -F <project-root>\autodl-ssh.config autodl-t4`
+- Authentication: dedicated local ED25519 key referenced by the project SSH config
+- Source of truth for endpoint, port, user, and key path: `ssh -F <project-root>\autodl-ssh.config -G autodl-t4`
 
-Do not duplicate the private key or password in the project. Treat hostname and port as changeable and resolve them from the alias.
+Do not duplicate the private key contents or password in the project. Treat hostname and port as changeable and update them from the current AutoDL console SSH command.
 
 ## Stable working conventions
 
@@ -74,7 +75,7 @@ ps -eo pid,ppid,%cpu,%mem,etime,cmd --sort=-%cpu | head -20
 Prefer SSH tunnels for development services that are not exposed by the AutoDL control panel:
 
 ```powershell
-ssh -L <local-port>:127.0.0.1:<remote-port> autodl-t4
+ssh -F <project-root>\autodl-ssh.config -L <local-port>:127.0.0.1:<remote-port> autodl-t4
 ```
 
 AutoDL commonly maps selected service ports through its control panel. Verify current mappings there rather than assuming a public endpoint.
