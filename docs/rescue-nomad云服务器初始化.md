@@ -51,6 +51,8 @@ conda create -y \
   /root/autodl-tmp/rescuebench_workspace/repos/RescueBench
 ```
 
+其它关键的包见`manifests\rescue-nomad-runtime-requirements.txt`
+
 ### 准备 UE 资源
 
 任何需要启动 RescueBench 仿真的测试，包括 random baseline，都需要 Unreal 二进制。官方 README 明确要求下载并设置 UnrealEnv。
@@ -110,6 +112,8 @@ cd "$REPO"
     --output "$PROJECT_ROOT/runs/random-baseline"
 
 # experiment.py 有问题，则使用下面的
+# 因为 experiment.py 中写死了某个路径，并不适配我当前的云服务器路径
+# 目前看这个和下面的功能相同，可以完全忽视它
 PROJECT_ROOT=/root/autodl-tmp/rescuebench_workspace
 REPO="$PROJECT_ROOT/repos/RescueBench"
 ENV_PATH="$PROJECT_ROOT/conda/envs/rescue-nomad"

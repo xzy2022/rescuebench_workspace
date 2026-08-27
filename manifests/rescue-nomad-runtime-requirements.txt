@@ -1,0 +1,37 @@
+# RescueBench + NoMaD runtime packages
+# Verified against:
+#   /root/autodl-tmp/rescuebench_workspace/conda/envs/rescue-nomad
+# Python 3.8.10, 2026-08-27
+#
+# Install the three editable source repositories separately; see
+# rescue-nomad-source-manifest.md. They are intentionally not Git URLs here,
+# because the working copies contain required local changes.
+
+--extra-index-url https://download.pytorch.org/whl/cu118
+
+# CUDA 11.8 PyTorch runtime
+torch==2.0.0+cu118
+torchvision==0.15.1+cu118
+
+# RescueBench / UnrealCV
+numpy==1.24.2
+opencv-python==4.6.0.66
+Pillow==9.4.0
+PyYAML==6.0
+gym==0.26.0
+unrealcv==1.1.7
+docker==7.2.0
+wget==3.2
+matplotlib==3.7.1
+
+# NoMaD / visualnav-transformer / diffusion-policy
+diffusers==0.11.1
+huggingface-hub==0.25.2
+efficientnet-pytorch==0.7.1
+einops==0.7.0
+vit-pytorch==1.6.3
+tqdm==4.61.2
+wandb==0.12.18
+prettytable==3.8.0
+protobuf==3.20.3
+
