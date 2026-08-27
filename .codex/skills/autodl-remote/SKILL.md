@@ -9,7 +9,7 @@ Operate the configured AutoDL instance directly. The project-root `autodl-ssh.co
 
 ## Maintain the current endpoint
 
-Before connecting to a newly created instance, update only `HostName` and `Port` in the project-root `autodl-ssh.config` from the current AutoDL console SSH command. Never store a password or private-key contents in that file. The actual config is local-only; `autodl-ssh.config.example` is the versioned template.
+Before connecting to a newly created instance, update only `HostName` and `Port` in the project-root `autodl-ssh.config` from the current AutoDL console SSH command. Never store a password or private-key contents in that file. 
 
 The wrapper uses the project config by default. Pass `-SshConfigPath <path>` only when the user explicitly chooses a different OpenSSH config file.
 
@@ -48,6 +48,8 @@ powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
 powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
   -Action Download -RemotePath <remote-path> -LocalPath <local-path> [-Recursive]
 ```
+
+`Probe` reports the current identity, OS, GPU and CUDA state, base Python/PyTorch and Conda state, remote job tools, storage mounts, and top-level data-disk directories. Treat reported `missing` values as findings to inspect; the probe never installs or repairs them.
 
 The wrapper enforces public-key-only authentication. Never pass or store an SSH password.
 

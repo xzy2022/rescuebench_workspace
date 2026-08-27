@@ -106,8 +106,102 @@ if ($LASTEXITCODE -ne 0) {
 
 switch ($Action) {
     'Probe' {
-        $probeCommand = 'echo AUTODL_CONNECTION_OK; whoami; hostname; date -Is; nvidia-smi --query-gpu=name,memory.total,memory.used,utilization.gpu --format=csv,noheader; df -hT /root/autodl-tmp; /root/miniconda3/bin/python --version'
-        & ssh @sshOptions $Alias $probeCommand
+        $probeCommand = @'
+set +e
+
+printf '%s\n' '=== connection ==='
+printf '%s\n' 'AUTODL_CONNECTION_OK'
+printf 'user='; id -un
+printf 'hostname='; hostname
+printf 'time='; date -Is
+
+printf '%s\n' '=== operating-system ==='
+if [ -r /etc/os-release ]; then
+    . /etc/os-release
+    printf 'os=%s\n' "${PRETTY_NAME:-unknown}"
+else
+    printf '%s\n' 'os=missing:/etc/os-release'
+fi
+printf 'kernel='; uname -srmo
+
+printf '%s\n' '=== gpu-and-cuda ==='
+if command -v nvidia-smi >/dev/null 2>&1; then
+    nvidia-smi --query-gpu=index,name,driver_version,memory.total,memory.used,utilization.gpu --format=csv,noheader
+    nvidia-smi | sed -n '1,3p'
+else
+    printf '%s\n' 'nvidia-smi=missing'
+fi
+if command -v nvcc >/dev/null 2>&1; then
+    printf 'nvcc='; nvcc --version | tail -n 1
+else
+    printf '%s\n' 'nvcc=missing'
+fi
+
+printf '%s\n' '=== base-python-and-pytorch ==='
+if [ -x /root/miniconda3/bin/python ]; then
+    printf 'python='; /root/miniconda3/bin/python --version 2>&1
+    /root/miniconda3/bin/python - <<'PY'
+try:
+    import torch
+except Exception as exc:
+    print(f"pytorch=unavailable:{type(exc).__name__}:{exc}")
+else:
+    print(f"pytorch_version={torch.__version__}")
+    print(f"pytorch_cuda_build={torch.version.cuda}")
+    print(f"pytorch_cuda_available={torch.cuda.is_available()}")
+PY
+else
+    printf '%s\n' 'python=missing:/root/miniconda3/bin/python'
+fi
+if [ -x /root/miniconda3/bin/conda ]; then
+    printf 'conda='; /root/miniconda3/bin/conda --version
+    /root/miniconda3/bin/conda env list
+else
+    printf '%s\n' 'conda=missing:/root/miniconda3/bin/conda'
+fi
+
+printf '%s\n' '=== remote-tools ==='
+if command -v screen >/dev/null 2>&1; then
+    printf 'screen='; screen --version | head -n 1
+else
+    printf '%s\n' 'screen=missing'
+fi
+if command -v tmux >/dev/null 2>&1; then
+    printf 'tmux='; tmux -V
+else
+    printf '%s\n' 'tmux=missing'
+fi
+
+printf '%s\n' '=== storage ==='
+df -hT /
+for storage_path in /root/autodl-tmp /root/autodl-fs; do
+    if [ -d "$storage_path" ]; then
+        printf 'storage_path=%s status=present\n' "$storage_path"
+        df -hT "$storage_path"
+    else
+        printf 'storage_path=%s status=missing\n' "$storage_path"
+    fi
+done
+
+printf '%s\n' '=== data-disk-top-level-directories ==='
+if [ -d /root/autodl-tmp ]; then
+    found_directory=false
+    for item in /root/autodl-tmp/*; do
+        [ -d "$item" ] || continue
+        printf 'directory=%s\n' "${item##*/}"
+        found_directory=true
+    done
+    $found_directory || printf '%s\n' 'directories=none'
+else
+    printf '%s\n' 'directories=unavailable:/root/autodl-tmp'
+fi
+
+printf '%s\n' '__AUTODL_PROBE_STATUS__=complete'
+exit 0
+'@
+        $probeCommandBase64 = ConvertTo-Utf8Base64 -Value $probeCommand
+        $probeLauncher = "printf '%s' '$probeCommandBase64' | base64 -d | bash"
+        & ssh @sshOptions $Alias $probeLauncher
         if ($LASTEXITCODE -ne 0) {
             throw "AutoDL probe failed with exit code $LASTEXITCODE."
         }
