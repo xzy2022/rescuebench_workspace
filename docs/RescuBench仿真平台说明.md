@@ -42,6 +42,42 @@
 - JSONL 数据同时提供`stretcher_loc`和`ambulance_loc`，但是两者是有一定空间距离差别的，实际评分只考虑担架，没有考虑救护车。
 - 上半程的伤员图像 ref_image 环境直接提供。下半程的担架图像并没有直接提供，而只有`stretcher_loc`坐标。一个合理的猜测是，测评平台希望模型自己根据空间记忆回到起点附近找到担架。
 
+```mermaid
+flowchart TB
+
+开始
+
+开始-->S1
+S1-->S2
+S2-->S3
+S3-->S4
+S4-->结束
+
+参考伤员图像ref_image-->S1
+stretcher_loc-->S3
+担架图像-.->S3
+
+subgraph S1
+    靠近伤员
+end
+
+subgraph S2
+    抱起伤员
+end
+
+subgraph S3
+    找到担架
+end
+
+subgraph S4
+    放下伤员
+end
+
+```
+
+其中，担架图像原数据集没有，有些模型需要(如nomad)，那就得自己采集。
+
+
 ## 关键路径
 
 ### 上半程人员图
@@ -132,3 +168,5 @@ FAILED_REASON-->FAILED
 | 接近伤员   |
 | 放下伤员   |
 | 开门     |
+
+
