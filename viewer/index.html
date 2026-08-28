@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RescueBench 实时画面</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #111;
+      color: #ddd;
+    }
+
+    main {
+      width: min(96vw, 1000px);
+      text-align: center;
+    }
+
+    #status {
+      margin: 8px 0;
+    }
+
+    #frame {
+      display: block;
+      width: 100%;
+      height: auto;
+      min-height: 240px;
+      object-fit: contain;
+      background: #222;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div id="status">正在等待 latest_frame.jpg……</div>
+    <img id="frame" alt="RescueBench 实时评估画面">
+  </main>
+
+  <script>
+    const frame = document.getElementById('frame');
+    const status = document.getElementById('status');
+    const refreshIntervalMs = 500;
+    const retryIntervalMs = 1000;
+
+    function refreshFrame() {
+      const url = `latest_frame.jpg?t=${Date.now()}`;
+      const next = new Image();
+
+      next.onload = () => {
+        frame.src = url;
+        status.textContent = `最后更新：${new Date().toLocaleTimeString()}`;
+        setTimeout(refreshFrame, refreshIntervalMs);
+      };
+
+      next.onerror = () => {
+        status.textContent = '正在等待 latest_frame.jpg……';
+        setTimeout(refreshFrame, retryIntervalMs);
+      };
+
+      next.src = url;
+    }
+
+    refreshFrame();
+  </script>
+</body>
+</html>
