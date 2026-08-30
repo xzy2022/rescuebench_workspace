@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [string]$WorkspaceRoot = "D:\Workspace\00_MyRepo\Rescubench",
+
     [Parameter(Mandatory = $true)]
     [string]$RepositoryPath,
 
@@ -24,11 +26,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$script:PrimaryRepositoryRoot = "D:\Workspace\00_MyRepo\Rescubench"
+$script:WorkspaceRoot = [System.IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd("\")
 $script:EnvironmentName = "rescuebench-local"
 $script:RepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryPath).TrimEnd("\")
-$script:ConfigPath = Join-Path $script:RepositoryRoot "pyproject.toml"
-$script:TestPathPattern = '(^|/)(tests?|test)(/|$)|(^|/)test_[^/]*\.py$'
+$script:RepositoryKind = $null
+$script:RepositoryCommonGitDirectory = $null
+$script:ConfigPath = $null
+$script:ConfigSource = $null
+$script:TestPathPattern = (
+    '(^|/)(tests?|test)(/|$)|' +
+    '(^|/)(test_[^/]*|[^/]*_test|conftest)\.py$'
+)
 $script:GitExecutable = (Get-Command git.exe -ErrorAction Stop).Source
 $script:CondaExecutable = $null
 
@@ -213,30 +221,57 @@ function Resolve-GitDirectory {
     return [System.IO.Path]::GetFullPath((Join-Path $Root $value)).TrimEnd("\")
 }
 
+function Test-ReviewConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+    $content = [System.IO.File]::ReadAllText($Path)
+    return (
+        $content -match '(?m)^\[tool\.ruff(?:\.|\])' -and
+        $content -match '(?m)^\[tool\.pylint(?:\.|\])'
+    )
+}
+
+function Resolve-ReviewConfig {
+    $repositoryConfig = Join-Path $script:RepositoryRoot "pyproject.toml"
+    if (Test-ReviewConfig -Path $repositoryConfig) {
+        $script:ConfigPath = [System.IO.Path]::GetFullPath($repositoryConfig)
+        $script:ConfigSource = "repository-native"
+        return
+    }
+
+    $workspaceConfig = Join-Path $script:WorkspaceRoot "pyproject.toml"
+    if (-not (Test-ReviewConfig -Path $workspaceConfig)) {
+        throw "Workspace Ruff/Pylint configuration is missing: $workspaceConfig"
+    }
+    $script:ConfigPath = [System.IO.Path]::GetFullPath($workspaceConfig)
+    $script:ConfigSource = "workspace-fallback"
+}
+
 function Assert-ExactRepository {
-    $primaryRoot = [System.IO.Path]::GetFullPath(
-        $script:PrimaryRepositoryRoot
-    ).TrimEnd("\")
-    if (-not (Test-Path -LiteralPath $primaryRoot -PathType Container)) {
-        throw "Primary repository does not exist: $primaryRoot"
+    if (-not (Test-Path -LiteralPath $script:WorkspaceRoot -PathType Container)) {
+        throw "Workspace root does not exist: $script:WorkspaceRoot"
     }
     if (-not (Test-Path -LiteralPath $script:RepositoryRoot -PathType Container)) {
         throw "Requested worktree does not exist: $script:RepositoryRoot"
     }
 
-    $primaryRepos = Join-Path $primaryRoot "repos"
-    $primaryReposPrefix = $primaryRepos.TrimEnd("\") + "\"
-    if (
-        $script:RepositoryRoot.Equals(
-            $primaryRepos,
-            [System.StringComparison]::OrdinalIgnoreCase
-        ) -or
-        $script:RepositoryRoot.StartsWith(
-            $primaryReposPrefix,
-            [System.StringComparison]::OrdinalIgnoreCase
-        )
-    ) {
-        throw "Refusing repository under repos/: $script:RepositoryRoot"
+    $actualWorkspaceRoot = (Invoke-GitRawAt `
+        -Root $script:WorkspaceRoot `
+        -ArgumentList @("rev-parse", "--show-toplevel")).Trim()
+    $actualWorkspaceRoot = [System.IO.Path]::GetFullPath(
+        $actualWorkspaceRoot
+    ).TrimEnd("\")
+    if (-not $actualWorkspaceRoot.Equals(
+        $script:WorkspaceRoot,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "WorkspaceRoot must be the exact worktree root: '$actualWorkspaceRoot'."
     }
 
     $actualRoot = (Invoke-GitRaw `
@@ -249,25 +284,60 @@ function Assert-ExactRepository {
         throw "RepositoryPath must be the exact worktree root: '$actualRoot'."
     }
 
-    $expectedCommon = Resolve-GitDirectory -Root $primaryRoot
+    $workspaceCommon = Resolve-GitDirectory -Root $script:WorkspaceRoot
     $actualCommon = Resolve-GitDirectory -Root $script:RepositoryRoot
-    if (-not $actualCommon.Equals(
-        $expectedCommon,
+    if ($script:RepositoryRoot.Equals(
+        $script:WorkspaceRoot,
         [System.StringComparison]::OrdinalIgnoreCase
     )) {
-        throw (
-            "Refusing unrelated Git repository '$actualCommon'; " +
-            "expected common directory '$expectedCommon'."
-        )
+        if (-not $actualCommon.Equals(
+            $workspaceCommon,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Outer repository common Git directory does not match the workspace."
+        }
+        $script:RepositoryKind = "outer"
+    }
+    else {
+        $reposRoot = [System.IO.Path]::GetFullPath(
+            (Join-Path $script:WorkspaceRoot "repos")
+        ).TrimEnd("\")
+        $reposPrefix = $reposRoot + "\"
+        if (-not $script:RepositoryRoot.StartsWith(
+            $reposPrefix,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw (
+                "RepositoryPath must be the outer workspace or an independent " +
+                "Git repository under repos/: $script:RepositoryRoot"
+            )
+        }
+        if ($actualCommon.Equals(
+            $workspaceCommon,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Repository under repos/ must have an independent Git directory."
+        }
+        $script:RepositoryKind = "independent"
     }
 
-    $script:PrimaryRepositoryRoot = $primaryRoot
-    $script:PrimaryCommonGitDirectory = $expectedCommon
+    $script:WorkspaceCommonGitDirectory = $workspaceCommon
+    $script:RepositoryCommonGitDirectory = $actualCommon
+    Resolve-ReviewConfig
 }
 
 function Assert-Config {
     if (-not (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf)) {
         throw "Ruff/Pylint configuration is missing: $script:ConfigPath"
+    }
+}
+
+function Assert-ActionAllowedForRepository {
+    if (
+        $script:RepositoryKind -eq "independent" -and
+        $Action -in @("VerifyCommitted", "FullWorkspaceAudit")
+    ) {
+        throw "$Action is not allowed for independent repositories under repos/."
     }
 }
 
@@ -311,15 +381,7 @@ function Assert-AllowedPythonPath {
         $repositoryPrefix,
         [System.StringComparison]::OrdinalIgnoreCase
     )) {
-        throw "Python path is outside the outer workspace: $PathValue"
-    }
-
-    $reposPrefix = (Join-Path $script:RepositoryRoot "repos").TrimEnd("\") + "\"
-    if ($fullPath.StartsWith(
-        $reposPrefix,
-        [System.StringComparison]::OrdinalIgnoreCase
-    )) {
-        throw "Python path is under forbidden repos/: $PathValue"
+        throw "Python path is outside the selected repository: $PathValue"
     }
     if (-not $fullPath.EndsWith(
         ".py",
@@ -331,6 +393,21 @@ function Assert-AllowedPythonPath {
         Test-Path -LiteralPath $fullPath -PathType Leaf
     )) {
         throw "Python file does not exist: $PathValue"
+    }
+
+    if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+        $fileRepository = (Invoke-GitRawAt `
+            -Root (Split-Path -Parent $fullPath) `
+            -ArgumentList @("rev-parse", "--show-toplevel")).Trim()
+        $fileRepository = [System.IO.Path]::GetFullPath(
+            $fileRepository
+        ).TrimEnd("\")
+        if (-not $fileRepository.Equals(
+            $script:RepositoryRoot,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Python path belongs to another Git repository: $PathValue"
+        }
     }
 
     return $fullPath.Substring($repositoryPrefix.Length).Replace("\", "/")
@@ -351,6 +428,40 @@ function New-PathLookup {
         }
     }
     return $lookup
+}
+
+function Test-IsTestPythonPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $normalized = $Path.Replace("\", "/")
+    return $normalized -match $script:TestPathPattern
+}
+
+function Split-PythonScope {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$PythonPath
+    )
+
+    $productionPython = @()
+    $testPython = @()
+    foreach ($path in $PythonPath) {
+        if (Test-IsTestPythonPath -Path $path) {
+            $testPython += $path
+        }
+        else {
+            $productionPython += $path
+        }
+    }
+
+    return [pscustomobject]@{
+        ProductionPython = @($productionPython)
+        TestPython = @($testPython)
+    }
 }
 
 function Get-ChangedPython {
@@ -430,10 +541,14 @@ function Write-RepositoryIdentity {
         "rev-parse", "--abbrev-ref", "HEAD"
     )).Trim()
     $head = (Invoke-GitRaw -ArgumentList @("rev-parse", "HEAD")).Trim()
+    Write-Output "RESCUEBENCH_WORKSPACE_ROOT=$script:WorkspaceRoot"
     Write-Output "RESCUEBENCH_WORKTREE=$script:RepositoryRoot"
-    Write-Output "RESCUEBENCH_COMMON_GIT_DIR=$script:PrimaryCommonGitDirectory"
+    Write-Output "RESCUEBENCH_REPOSITORY_KIND=$script:RepositoryKind"
+    Write-Output "RESCUEBENCH_COMMON_GIT_DIR=$script:RepositoryCommonGitDirectory"
     Write-Output "RESCUEBENCH_BRANCH=$branch"
     Write-Output "RESCUEBENCH_HEAD=$head"
+    Write-Output "RESCUEBENCH_CONFIG_PATH=$script:ConfigPath"
+    Write-Output "RESCUEBENCH_CONFIG_SOURCE=$script:ConfigSource"
 }
 
 function Write-Scope {
@@ -445,8 +560,15 @@ function Write-Scope {
         [switch]$Committed
     )
 
+    $scope = Split-PythonScope -PythonPath $PythonPath
+
     Write-RepositoryIdentity
     Write-Output "RESCUEBENCH_PYTHON_COUNT=$($PythonPath.Count)"
+    Write-Output (
+        "RESCUEBENCH_PRODUCTION_PYTHON_COUNT=" +
+        $scope.ProductionPython.Count
+    )
+    Write-Output "RESCUEBENCH_TEST_PYTHON_COUNT=$($scope.TestPython.Count)"
     if (-not $Committed) {
         $status = Get-CurrentStatusLookups
     }
@@ -464,7 +586,7 @@ function Write-Scope {
                 "untracked=$([int]$status.Untracked.ContainsKey($key))"
             )
         }
-        if ($relative -match $script:TestPathPattern) {
+        if (Test-IsTestPythonPath -Path $relative) {
             Write-Output "RESCUEBENCH_TEST_PYTHON=$relative|$state"
         }
         else {
@@ -549,6 +671,36 @@ function Invoke-NativeCheck {
     return $result.ExitCode
 }
 
+function Invoke-UntrackedWhitespaceCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$PythonPath
+    )
+
+    $status = Get-CurrentStatusLookups
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    $failures = 0
+    foreach ($path in $PythonPath) {
+        $relative = Assert-AllowedPythonPath -PathValue $path -MustExist
+        if (-not $status.Untracked.ContainsKey($relative.ToLowerInvariant())) {
+            continue
+        }
+        $fullPath = Join-Path $script:RepositoryRoot $relative
+        $content = [System.IO.File]::ReadAllText($fullPath, $strictUtf8)
+        $lines = [regex]::Split($content, "\r\n|\n|\r")
+        for ($index = 0; $index -lt $lines.Count; $index += 1) {
+            if ($lines[$index] -match '[ \t]+$') {
+                Write-Host "${relative}:$($index + 1): trailing whitespace."
+                $failures += 1
+            }
+        }
+    }
+    $exitCode = [int]($failures -gt 0)
+    Write-Host "RESCUEBENCH_TOOL_EXIT=untracked-whitespace|$exitCode"
+    return $exitCode
+}
+
 function Invoke-CheckScope {
     param(
         [Parameter(Mandatory = $true)]
@@ -565,6 +717,17 @@ function Invoke-CheckScope {
     }
     Assert-Config
 
+    $scope = Split-PythonScope -PythonPath $PythonPath
+    Write-Host "RESCUEBENCH_PYLINT_SCOPE=production_only"
+    Write-Host (
+        "RESCUEBENCH_PYLINT_PYTHON_COUNT=" +
+        $scope.ProductionPython.Count
+    )
+    Write-Host (
+        "RESCUEBENCH_PYLINT_SKIPPED_TEST_COUNT=" +
+        $scope.TestPython.Count
+    )
+
     $failures = 0
     Push-Location $script:RepositoryRoot
     try {
@@ -572,7 +735,7 @@ function Invoke-CheckScope {
             -Label "ruff-check" `
             -ArgumentList (@(
                 "python", "-m", "ruff", "check",
-                "--config", "pyproject.toml"
+                "--config", $script:ConfigPath
             ) + $PythonPath)
         if ($ruffCheck -ne 0) {
             $failures += 1
@@ -582,19 +745,27 @@ function Invoke-CheckScope {
             -Label "ruff-format-check" `
             -ArgumentList (@(
                 "python", "-m", "ruff", "format",
-                "--config", "pyproject.toml", "--check"
+                "--config", $script:ConfigPath, "--check"
             ) + $PythonPath)
         if ($ruffFormat -ne 0) {
             $failures += 1
         }
 
-        $pylint = Invoke-CondaTool `
-            -Label "pylint" `
-            -ArgumentList (@(
-                "python", "-m", "pylint", "--rcfile=pyproject.toml"
-            ) + $PythonPath)
-        if ($pylint -ne 0) {
-            $failures += 1
+        if ($scope.ProductionPython.Count -gt 0) {
+            $pylint = Invoke-CondaTool `
+                -Label "pylint" `
+                -ArgumentList (@(
+                    "python", "-m", "pylint", "--rcfile=$script:ConfigPath"
+                ) + $scope.ProductionPython)
+            if ($pylint -ne 0) {
+                $failures += 1
+            }
+        }
+        else {
+            Write-Host (
+                "RESCUEBENCH_TOOL_SKIPPED=" +
+                "pylint|no_production_python"
+            )
         }
 
         $diffCheck = Invoke-NativeCheck `
@@ -606,6 +777,14 @@ function Invoke-CheckScope {
             ) + $PythonPath)
         if ($diffCheck -ne 0) {
             $failures += 1
+        }
+
+        if (-not $Committed) {
+            $untrackedWhitespace = Invoke-UntrackedWhitespaceCheck `
+                -PythonPath $PythonPath
+            if ($untrackedWhitespace -ne 0) {
+                $failures += 1
+            }
         }
     }
     finally {
@@ -646,7 +825,7 @@ function Invoke-FixExplicit {
             -Label "ruff-fix" `
             -ArgumentList (@(
                 "python", "-m", "ruff", "check",
-                "--config", "pyproject.toml", "--fix"
+                "--config", $script:ConfigPath, "--fix"
             ) + $resolved)
         if ($fixExit -ne 0) {
             throw "Ruff safe-fix failed."
@@ -656,7 +835,7 @@ function Invoke-FixExplicit {
             -Label "ruff-format" `
             -ArgumentList (@(
                 "python", "-m", "ruff", "format",
-                "--config", "pyproject.toml"
+                "--config", $script:ConfigPath
             ) + $resolved)
         if ($formatExit -ne 0) {
             throw "Ruff format failed."
@@ -704,6 +883,7 @@ function Invoke-Probe {
 
 Set-Utf8Environment
 Assert-ExactRepository
+Assert-ActionAllowedForRepository
 
 switch ($Action) {
     "Probe" {

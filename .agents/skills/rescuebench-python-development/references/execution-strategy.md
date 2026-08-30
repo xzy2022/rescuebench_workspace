@@ -75,14 +75,18 @@ Use checks in increasing order of cost:
 1. Run the cheapest import, CLI, or small behavioral check that can reject the
    current implementation route.
 2. Run the explicit focused pytest target for the completed behavior.
-3. Invoke `FixExplicit` once for all Python files in the stable slice.
+3. Invoke `FixExplicit` once for all Python files in the stable slice. It runs
+   Ruff on the complete changed-Python scope and Pylint only on production
+   Python.
 4. Re-run a focused test only when `FixExplicit` changed relevant source or when
    the final behavior has not yet been exercised.
 
 `FixExplicit` performs safe Ruff fixes and formatting for the explicit files,
-then runs the complete changed-Python review. Do not follow it immediately with
-an identical `CheckChanged`. A later `CheckChanged` is warranted only after
-subsequent edits or an external worktree-state change.
+then runs complete-scope Ruff and diff checks plus production-only Pylint. Test
+Python does not enter Pylint, but its focused execution remains separate
+behavioral evidence. Do not follow `FixExplicit` immediately with an identical
+`CheckChanged`. A later `CheckChanged` is warranted only after subsequent edits
+or an external worktree-state change.
 
 ## Avoid these failure patterns
 
@@ -92,4 +96,6 @@ subsequent edits or an external worktree-state change.
 - probing a known-stable tool before every ordinary test run;
 - changing lint thresholds or adding wrappers only to erase a calibrated
   metric;
+- restructuring test Python only to satisfy a Pylint finding that is outside
+  the test-code policy;
 - turning one past failure into a universal preflight checklist.

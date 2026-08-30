@@ -1,4 +1,0 @@
-interface:
-  display_name: "RescueBench Python Change Reviewer"
-  short_description: "渐进审查 RescueBench 外层工作空间 Python 变更"
-  default_prompt: "Use $rescuebench-review-python-changes to inspect the current outer-workspace Python changes without entering repos/."

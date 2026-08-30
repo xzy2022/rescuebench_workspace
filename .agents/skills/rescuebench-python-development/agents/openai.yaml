@@ -1,0 +1,7 @@
+interface:
+  display_name: "RescueBench Python Development"
+  short_description: "开发中执行 Ruff、生产代码 Pylint 与结构校准"
+  default_prompt: "Use $rescuebench-python-development during authorized Python development to review each stable slice, report strict check results, and let calibrated design evidence decide whether to refactor further."
+
+policy:
+  allow_implicit_invocation: true
