@@ -1,4 +1,6 @@
 /repos/
 /tmp/
 
+
 *.pth
+*.pyc
