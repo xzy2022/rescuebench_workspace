@@ -56,6 +56,24 @@ plus untracked, non-ignored Python files, excludes deletions, and reports staged
 unstaged, and untracked state separately. Never replace an empty scope with a
 directory, wildcard, recursive filesystem search, or full audit.
 
+## Plan decision-changing work once
+
+Read [references/execution-strategy.md](references/execution-strategy.md) before
+an authorized change that introduces a tool or dependency, changes multiple
+tightly coupled files, or alters entrypoints or import boundaries. Skip it for
+review-only work and ordinary single-finding repairs.
+
+- Verify only unknowns that could change the implementation route. Reuse facts
+  already established for the unchanged checkout and Conda environment.
+- Treat `environment.windows.yml` as the test-tool source of truth. In ordinary
+  reviews, invoke targeted pytest directly in `rescuebench-local`; do not run a
+  separate pytest presence or version probe. Re-diagnose only after an
+  environment or manifest change, an environment switch, or an actual command
+  failure.
+- Define the supported entrypoints, import boundaries, and focused behavioral
+  checks before editing, then keep one tightly coupled change in one repair
+  slice. Do not invoke the complete review helper after every file edit.
+
 ## Calibrate before changing policy
 
 Read [references/calibration.md](references/calibration.md) when a new rule or
@@ -72,9 +90,16 @@ For an authorized repair:
 1. Select one finding or one tightly coupled group.
 2. State the selected files and responsibility boundary.
 3. Preserve unrelated staged, unstaged, and untracked changes.
-4. Invoke `FixExplicit` with explicit Git-relative Python paths only.
-5. Re-run `CheckChanged` for the complete changed-Python scope.
-6. Run focused behavioral tests when they exist.
+4. Complete the authorized slice and run cheap, focused checks while it is still
+   changing.
+5. Invoke `FixExplicit` once with every explicit Git-relative Python path in the
+   completed slice.
+6. Run focused behavioral tests against the resulting files when they exist.
+
+`FixExplicit` already runs the complete changed-Python Ruff, format-check,
+Pylint, and diff review after formatting. Do not immediately invoke a duplicate
+`CheckChanged`. Run `CheckChanged` again only if files or relevant worktree state
+change afterward without another `FixExplicit` run.
 
 Example:
 
