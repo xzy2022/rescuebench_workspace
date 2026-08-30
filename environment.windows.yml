@@ -1,0 +1,17 @@
+# Lightweight environment for local Windows scripts.
+# Cloud training and inference dependencies remain in manifests/.
+name: rescuebench-local
+
+channels:
+  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+  - nodefaults
+
+dependencies:
+  - python=3.11.16
+  - pip=26.2.1
+  - numpy=2.4.6
+  - matplotlib-base=3.11.0
+  - pillow=12.3.0
+  - pyyaml=6.0.3
+  - requests=2.34.2
+  - tqdm=4.70.0
