@@ -57,6 +57,11 @@ structural script repair, the useful matrix may include:
 Do not invent compatibility paths that the current code, documentation, or user
 request does not require.
 
+Before the feedback ladder, resolve the static target Python version from an
+authoritative requirement for the selected code. Use the same target for Ruff
+lint, Ruff formatting, Ruff fixes, and Pylint throughout the slice. A local tool
+interpreter with a different version is not target-runtime evidence.
+
 ## Choose one cohesive repair slice
 
 Files belong in one slice when they must change together to produce one usable
@@ -87,6 +92,10 @@ Python does not enter Pylint, but its focused execution remains separate
 behavioral evidence. Do not follow `FixExplicit` immediately with an identical
 `CheckChanged`. A later `CheckChanged` is warranted only after subsequent edits
 or an external worktree-state change.
+
+If `FixExplicit` changes production code, re-run the focused behavior affected
+by that change. Never change the target-version argument between the pre-fix
+check, `FixExplicit`, and the final focused verification.
 
 ## Avoid these failure patterns
 

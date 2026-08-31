@@ -16,6 +16,8 @@ param(
     )]
     [string]$Action,
 
+    [string]$TargetPythonVersion,
+
     [string[]]$PythonFile = @(),
 
     [string]$BaseRevision,
@@ -33,6 +35,14 @@ $script:RepositoryKind = $null
 $script:RepositoryCommonGitDirectory = $null
 $script:ConfigPath = $null
 $script:ConfigSource = $null
+$script:RequestedTargetPythonVersion = $TargetPythonVersion
+$script:EffectiveTargetPythonVersion = $null
+$script:RuffTargetVersion = $null
+$script:PylintTargetVersion = $null
+$script:TargetPythonVersionSource = "unresolved"
+$script:TargetPythonVersionReason = "not-resolved"
+$script:ConfigRuffTargetPythonVersion = $null
+$script:ConfigPylintTargetPythonVersion = $null
 $script:TestPathPattern = (
     '(^|/)(tests?|test)(/|$)|' +
     '(^|/)(test_[^/]*|[^/]*_test|conftest)\.py$'
@@ -235,6 +245,175 @@ function Test-ReviewConfig {
         $content -match '(?m)^\[tool\.ruff(?:\.|\])' -and
         $content -match '(?m)^\[tool\.pylint(?:\.|\])'
     )
+}
+
+function ConvertTo-TargetPythonVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Source
+    )
+
+    if ($Value -notmatch '^(?<major>[0-9]+)\.(?<minor>[0-9]+)(?:\.(?<patch>[0-9]+))?$') {
+        throw (
+            "Invalid target Python version from ${Source}: '$Value'. " +
+            "Expected major.minor or major.minor.patch."
+        )
+    }
+
+    $major = [int]$Matches.major
+    $minor = [int]$Matches.minor
+    if ($major -ne 3) {
+        throw "Unsupported target Python major version from ${Source}: '$Value'."
+    }
+
+    $effective = "${major}.${minor}"
+    return [pscustomobject]@{
+        Effective = $effective
+        Ruff = "py${major}${minor}"
+        Pylint = $effective
+    }
+}
+
+function Get-TomlSectionStringValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Section,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    $currentSection = $null
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        if ($line -match '^\s*\[(?<section>[^]]+)\]\s*(?:#.*)?$') {
+            $currentSection = $Matches.section.Trim()
+            continue
+        }
+        if ($currentSection -ne $Section) {
+            continue
+        }
+        if ($line -match '^\s*(?<key>[A-Za-z0-9_-]+)\s*=\s*["''](?<value>[^"'']+)["'']\s*(?:#.*)?$') {
+            if ($Matches.key -eq $Key) {
+                return $Matches.value
+            }
+        }
+    }
+    return $null
+}
+
+function ConvertFrom-RuffTargetVersion {
+    param([string]$Value)
+
+    if (-not $Value) {
+        return $null
+    }
+    if ($Value -notmatch '^py(?<major>[0-9])(?<minor>[0-9]+)$') {
+        throw "Invalid Ruff target-version in review config: '$Value'."
+    }
+    return "$([int]$Matches.major).$([int]$Matches.minor)"
+}
+
+function Resolve-StaticTargetPythonVersion {
+    $ruffConfigValue = Get-TomlSectionStringValue `
+        -Path $script:ConfigPath `
+        -Section "tool.ruff" `
+        -Key "target-version"
+    $pylintConfigValue = Get-TomlSectionStringValue `
+        -Path $script:ConfigPath `
+        -Section "tool.pylint.main" `
+        -Key "py-version"
+
+    $script:ConfigRuffTargetPythonVersion = ConvertFrom-RuffTargetVersion `
+        -Value $ruffConfigValue
+    if ($pylintConfigValue) {
+        $pylintConfig = ConvertTo-TargetPythonVersion `
+            -Value $pylintConfigValue `
+            -Source "Pylint review config"
+        $script:ConfigPylintTargetPythonVersion = $pylintConfig.Effective
+    }
+
+    if ($script:RequestedTargetPythonVersion) {
+        $target = ConvertTo-TargetPythonVersion `
+            -Value $script:RequestedTargetPythonVersion `
+            -Source "-TargetPythonVersion"
+        $script:EffectiveTargetPythonVersion = $target.Effective
+        $script:RuffTargetVersion = $target.Ruff
+        $script:PylintTargetVersion = $target.Pylint
+        $script:TargetPythonVersionSource = "explicit"
+        $script:TargetPythonVersionReason = "resolved"
+        return
+    }
+
+    if (
+        $script:RepositoryKind -eq "independent" -and
+        $script:ConfigSource -eq "workspace-fallback"
+    ) {
+        $script:TargetPythonVersionReason = "independent-workspace-fallback"
+        return
+    }
+
+    if (
+        -not $script:ConfigRuffTargetPythonVersion -or
+        -not $script:ConfigPylintTargetPythonVersion
+    ) {
+        $script:TargetPythonVersionReason = "config-target-missing"
+        return
+    }
+    if (
+        $script:ConfigRuffTargetPythonVersion -ne
+        $script:ConfigPylintTargetPythonVersion
+    ) {
+        $script:TargetPythonVersionReason = "config-target-mismatch"
+        return
+    }
+
+    $target = ConvertTo-TargetPythonVersion `
+        -Value $script:ConfigRuffTargetPythonVersion `
+        -Source "review config"
+    $script:EffectiveTargetPythonVersion = $target.Effective
+    $script:RuffTargetVersion = $target.Ruff
+    $script:PylintTargetVersion = $target.Pylint
+    if ($script:ConfigSource -eq "repository-native") {
+        $script:TargetPythonVersionSource = "repository-config"
+    }
+    else {
+        $script:TargetPythonVersionSource = "workspace-config"
+    }
+    $script:TargetPythonVersionReason = "resolved"
+}
+
+function Assert-StaticTargetPythonVersion {
+    if ($script:EffectiveTargetPythonVersion) {
+        return
+    }
+
+    $details = "reason=$script:TargetPythonVersionReason"
+    if ($script:ConfigRuffTargetPythonVersion) {
+        $details += ";ruff=$script:ConfigRuffTargetPythonVersion"
+    }
+    if ($script:ConfigPylintTargetPythonVersion) {
+        $details += ";pylint=$script:ConfigPylintTargetPythonVersion"
+    }
+    throw (
+        "Static target Python version is unresolved ($details). " +
+        "Pass -TargetPythonVersion <major.minor> before running review tools."
+    )
+}
+
+function Get-RuffTargetArguments {
+    Assert-StaticTargetPythonVersion
+    return @("--target-version", $script:RuffTargetVersion)
+}
+
+function Get-PylintTargetArguments {
+    Assert-StaticTargetPythonVersion
+    return @("--py-version=$script:PylintTargetVersion")
 }
 
 function Resolve-ReviewConfig {
@@ -549,6 +728,57 @@ function Write-RepositoryIdentity {
     Write-Output "RESCUEBENCH_HEAD=$head"
     Write-Output "RESCUEBENCH_CONFIG_PATH=$script:ConfigPath"
     Write-Output "RESCUEBENCH_CONFIG_SOURCE=$script:ConfigSource"
+    if ($script:RequestedTargetPythonVersion) {
+        Write-Output (
+            "RESCUEBENCH_TARGET_PYTHON_REQUESTED=" +
+            $script:RequestedTargetPythonVersion
+        )
+    }
+    else {
+        Write-Output "RESCUEBENCH_TARGET_PYTHON_REQUESTED=none"
+    }
+    if ($script:EffectiveTargetPythonVersion) {
+        Write-Output (
+            "RESCUEBENCH_TARGET_PYTHON_EFFECTIVE=" +
+            $script:EffectiveTargetPythonVersion
+        )
+        Write-Output "RESCUEBENCH_RUFF_TARGET_VERSION=$script:RuffTargetVersion"
+        Write-Output (
+            "RESCUEBENCH_PYLINT_TARGET_VERSION=" +
+            $script:PylintTargetVersion
+        )
+    }
+    else {
+        Write-Output "RESCUEBENCH_TARGET_PYTHON_EFFECTIVE=unresolved"
+        Write-Output "RESCUEBENCH_RUFF_TARGET_VERSION=unresolved"
+        Write-Output "RESCUEBENCH_PYLINT_TARGET_VERSION=unresolved"
+    }
+    Write-Output (
+        "RESCUEBENCH_TARGET_PYTHON_SOURCE=" +
+        $script:TargetPythonVersionSource
+    )
+    Write-Output (
+        "RESCUEBENCH_TARGET_PYTHON_REASON=" +
+        $script:TargetPythonVersionReason
+    )
+    Write-Output (
+        "RESCUEBENCH_CONFIG_RUFF_TARGET_PYTHON=" +
+        $(if ($script:ConfigRuffTargetPythonVersion) {
+            $script:ConfigRuffTargetPythonVersion
+        }
+        else {
+            "missing"
+        })
+    )
+    Write-Output (
+        "RESCUEBENCH_CONFIG_PYLINT_TARGET_PYTHON=" +
+        $(if ($script:ConfigPylintTargetPythonVersion) {
+            $script:ConfigPylintTargetPythonVersion
+        }
+        else {
+            "missing"
+        })
+    )
 }
 
 function Write-Scope {
@@ -716,6 +946,10 @@ function Invoke-CheckScope {
         return
     }
     Assert-Config
+    Assert-StaticTargetPythonVersion
+
+    $ruffTargetArguments = @(Get-RuffTargetArguments)
+    $pylintTargetArguments = @(Get-PylintTargetArguments)
 
     $scope = Split-PythonScope -PythonPath $PythonPath
     Write-Host "RESCUEBENCH_PYLINT_SCOPE=production_only"
@@ -736,7 +970,7 @@ function Invoke-CheckScope {
             -ArgumentList (@(
                 "python", "-m", "ruff", "check",
                 "--config", $script:ConfigPath
-            ) + $PythonPath)
+            ) + $ruffTargetArguments + $PythonPath)
         if ($ruffCheck -ne 0) {
             $failures += 1
         }
@@ -746,7 +980,7 @@ function Invoke-CheckScope {
             -ArgumentList (@(
                 "python", "-m", "ruff", "format",
                 "--config", $script:ConfigPath, "--check"
-            ) + $PythonPath)
+            ) + $ruffTargetArguments + $PythonPath)
         if ($ruffFormat -ne 0) {
             $failures += 1
         }
@@ -756,7 +990,7 @@ function Invoke-CheckScope {
                 -Label "pylint" `
                 -ArgumentList (@(
                     "python", "-m", "pylint", "--rcfile=$script:ConfigPath"
-                ) + $scope.ProductionPython)
+                ) + $pylintTargetArguments + $scope.ProductionPython)
             if ($pylint -ne 0) {
                 $failures += 1
             }
@@ -807,6 +1041,9 @@ function Invoke-FixExplicit {
         throw "FixExplicit requires explicit -PythonFile values."
     }
     Assert-Config
+    Assert-StaticTargetPythonVersion
+
+    $ruffTargetArguments = @(Get-RuffTargetArguments)
 
     $changedPython = @(Get-ChangedPython)
     $changedLookup = New-PathLookup -Path $changedPython
@@ -826,7 +1063,7 @@ function Invoke-FixExplicit {
             -ArgumentList (@(
                 "python", "-m", "ruff", "check",
                 "--config", $script:ConfigPath, "--fix"
-            ) + $resolved)
+            ) + $ruffTargetArguments + $resolved)
         if ($fixExit -ne 0) {
             throw "Ruff safe-fix failed."
         }
@@ -836,7 +1073,7 @@ function Invoke-FixExplicit {
             -ArgumentList (@(
                 "python", "-m", "ruff", "format",
                 "--config", $script:ConfigPath
-            ) + $resolved)
+            ) + $ruffTargetArguments + $resolved)
         if ($formatExit -ne 0) {
             throw "Ruff format failed."
         }
@@ -864,7 +1101,13 @@ function Invoke-Probe {
 
     $failures = 0
     foreach ($tool in @(
-        @{ Label = "python-version"; Arguments = @("python", "--version") },
+        @{
+            Label = "python-version"
+            Arguments = @(
+                "python", "-c",
+                "import sys; print('RESCUEBENCH_TOOLCHAIN_PYTHON=' + '.'.join(map(str, sys.version_info[:3])))"
+            )
+        },
         @{ Label = "ruff-version"; Arguments = @("python", "-m", "ruff", "--version") },
         @{ Label = "pylint-version"; Arguments = @("python", "-m", "pylint", "--version") }
     )) {
@@ -884,6 +1127,7 @@ function Invoke-Probe {
 Set-Utf8Environment
 Assert-ExactRepository
 Assert-ActionAllowedForRepository
+Resolve-StaticTargetPythonVersion
 
 switch ($Action) {
     "Probe" {

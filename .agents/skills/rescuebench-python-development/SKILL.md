@@ -54,6 +54,29 @@ $helperPath = [System.IO.Path]::GetFullPath(
 
 Use the current worktree root explicitly with every action.
 
+## Resolve the static target Python version
+
+The `rescuebench-local` Python version runs the review tools; it is not
+automatically the minimum Python version supported by the selected code. Before
+running a nonempty static review, resolve the target from, in priority order:
+
+1. an explicit user or task requirement;
+2. runtime or packaging metadata that is authoritative for the selected code;
+3. the selected repository's own matching Ruff and Pylint targets.
+
+Do not infer a deployment target from the local Conda environment, an unrelated
+document, or a historical server snapshot. The outer repository may use its
+repository-native matching targets. An independent repository that has its own
+matching review targets may use them too. When an independent repository uses
+the outer workspace config as a fallback, pass `-TargetPythonVersion` explicitly;
+the helper will refuse a nonempty check or fix without it.
+
+`-TargetPythonVersion` accepts `major.minor` or `major.minor.patch` and applies
+the normalized major/minor target to Ruff lint, Ruff formatting, Ruff fixes, and
+production-only Pylint. Pass the same value to every helper action in one stable
+slice. This is a static-analysis target only; it does not switch the Conda
+interpreter or prove execution in the target runtime.
+
 ## Route by user intent
 
 - For analysis, inspection, or review-only requests, use `Probe`, `Scope`, and
@@ -84,9 +107,13 @@ For an explicitly targeted independent repository, pass its exact Git root:
 
 ```powershell
 $repositoryPath = 'D:\Workspace\00_MyRepo\Rescubench\repos\RescueBench'
-& $helperPath -RepositoryPath $repositoryPath -Action Probe
-& $helperPath -RepositoryPath $repositoryPath -Action Scope
-& $helperPath -RepositoryPath $repositoryPath -Action CheckChanged
+$targetPythonVersion = '3.8'
+& $helperPath -RepositoryPath $repositoryPath -Action Probe `
+    -TargetPythonVersion $targetPythonVersion
+& $helperPath -RepositoryPath $repositoryPath -Action Scope `
+    -TargetPythonVersion $targetPythonVersion
+& $helperPath -RepositoryPath $repositoryPath -Action CheckChanged `
+    -TargetPythonVersion $targetPythonVersion
 ```
 
 `Scope` is authoritative. It includes Python files changed relative to `HEAD`
@@ -190,6 +217,7 @@ Example:
 & $helperPath `
     -RepositoryPath $repositoryPath `
     -Action FixExplicit `
+    -TargetPythonVersion $targetPythonVersion `
     -PythonFile @('scripts/example.py')
 ```
 
@@ -232,6 +260,8 @@ complete-scope checks but still excludes test Python from Pylint.
 - Do not claim that a read-only check modified or fixed a file.
 - Do not claim that one repository's result covers another repository, AutoDL,
   Unreal runtime, or model execution.
+- Do not describe a static target version as a target-runtime execution result.
+  Report the toolchain interpreter and static target separately.
 - Do not claim that test Python passed Pylint; report that it was skipped by
   policy and report focused test execution separately.
 - Stop on undecodable output or garbled paths and report the encoding boundary.

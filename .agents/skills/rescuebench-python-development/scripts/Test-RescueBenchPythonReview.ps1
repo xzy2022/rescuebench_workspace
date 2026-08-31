@@ -197,6 +197,7 @@ $reposRoot = Join-Path $workspaceRoot "repos"
 $repositoryA = Join-Path $reposRoot "repo-a"
 $repositoryB = Join-Path $reposRoot "repo-b"
 $repositoryTests = Join-Path $reposRoot "repo-tests"
+$repositoryMismatch = Join-Path $reposRoot "repo-mismatch"
 $outsideRepository = Join-Path $testRoot "outside-repo"
 
 $reviewConfig = @'
@@ -263,6 +264,15 @@ try {
     Write-Utf8Text -Path (Join-Path $repositoryB "other.py") `
         -Value "`"`"`"Other repository fixture.`"`"`"`n`nVALUE = 1`n"
 
+    Initialize-Repository -Path $repositoryMismatch
+    Write-Utf8Text -Path (Join-Path $repositoryMismatch "pyproject.toml") `
+        -Value ($reviewConfig -replace 'py-version = "3.11"', 'py-version = "3.8"')
+    Write-Utf8Text -Path (Join-Path $repositoryMismatch "committed.py") `
+        -Value "`"`"`"Mismatch fixture.`"`"`"`n`nVALUE = 1`n"
+    Commit-All -Root $repositoryMismatch -Message "Initialize mismatch repository"
+    Write-Utf8Text -Path (Join-Path $repositoryMismatch "changed.py") `
+        -Value "`"`"`"Changed mismatch fixture.`"`"`"`n`nVALUE = 1`n"
+
     Initialize-Repository -Path $repositoryTests
     Write-Utf8Text -Path (Join-Path $repositoryTests "committed.py") `
         -Value "`"`"`"Committed test-repository fixture.`"`"`"`n`nVALUE = 1`n"
@@ -293,6 +303,7 @@ try {
     $beforeA = Get-RepositoryFingerprint -Root $repositoryA
     $beforeB = Get-RepositoryFingerprint -Root $repositoryB
     $beforeTests = Get-RepositoryFingerprint -Root $repositoryTests
+    $beforeMismatch = Get-RepositoryFingerprint -Root $repositoryMismatch
 
     $outerScope = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
@@ -343,10 +354,61 @@ try {
     Assert-True -Condition (-not $scopeA.Output.Contains("other.py")) `
         -Message "Another repository should not enter Scope."
 
-    $checkA = Invoke-HelperProcess `
+    $checkAWithoutTarget = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryA `
         -ArgumentList @("-Action", "CheckChanged")
+    Assert-True -Condition ($checkAWithoutTarget.ExitCode -ne 0) `
+        -Message "Workspace-fallback CheckChanged should require a target version."
+    Assert-True `
+        -Condition $checkAWithoutTarget.Output.Contains("independent-workspace-fallback") `
+        -Message "Missing target-version failure reason is absent."
+
+    $fixAWithoutTarget = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryA `
+        -ArgumentList @(
+            "-Action", "FixExplicit", "-PythonFile", "untracked.py"
+        )
+    Assert-True -Condition ($fixAWithoutTarget.ExitCode -ne 0) `
+        -Message "Workspace-fallback FixExplicit should require a target version."
+    Assert-Equal -Expected $beforeA `
+        -Actual (Get-RepositoryFingerprint -Root $repositoryA) `
+        -Message "Missing target version changed repository A."
+
+    $explicitProbe = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryA `
+        -ArgumentList @(
+            "-Action", "Probe", "-TargetPythonVersion", "3.8.10"
+        )
+    Assert-Equal -Expected 0 -Actual $explicitProbe.ExitCode `
+        -Message "Explicit target-version Probe should pass."
+    Assert-True `
+        -Condition $explicitProbe.Output.Contains("RESCUEBENCH_TARGET_PYTHON_EFFECTIVE=3.8") `
+        -Message "Patch target version was not normalized."
+    Assert-True `
+        -Condition $explicitProbe.Output.Contains("RESCUEBENCH_RUFF_TARGET_VERSION=py38") `
+        -Message "Ruff target version was not derived."
+    Assert-True `
+        -Condition $explicitProbe.Output.Contains("RESCUEBENCH_PYLINT_TARGET_VERSION=3.8") `
+        -Message "Pylint target version was not derived."
+
+    $invalidTarget = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryA `
+        -ArgumentList @(
+            "-Action", "Probe", "-TargetPythonVersion", "2.7"
+        )
+    Assert-True -Condition ($invalidTarget.ExitCode -ne 0) `
+        -Message "A non-Python-3 target should be rejected."
+
+    $checkA = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryA `
+        -ArgumentList @(
+            "-Action", "CheckChanged", "-TargetPythonVersion", "3.11"
+        )
     Assert-Equal -Expected 0 -Actual $checkA.ExitCode `
         -Message "Independent CheckChanged should pass."
     Assert-True `
@@ -365,6 +427,36 @@ try {
     Assert-True `
         -Condition $scopeB.Output.Contains("RESCUEBENCH_PYTHON_COUNT=1") `
         -Message "Second repository Scope is not isolated."
+    Assert-True `
+        -Condition $scopeB.Output.Contains("RESCUEBENCH_TARGET_PYTHON_EFFECTIVE=3.11") `
+        -Message "Repository-native target version is missing."
+
+    $mismatchScope = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryMismatch `
+        -ArgumentList @("-Action", "Scope")
+    Assert-Equal -Expected 0 -Actual $mismatchScope.ExitCode `
+        -Message "Mismatch Scope should remain read-only and report its state."
+    Assert-True `
+        -Condition $mismatchScope.Output.Contains("RESCUEBENCH_TARGET_PYTHON_REASON=config-target-mismatch") `
+        -Message "Config target mismatch is not reported."
+    $mismatchCheck = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryMismatch `
+        -ArgumentList @("-Action", "CheckChanged")
+    Assert-True -Condition ($mismatchCheck.ExitCode -ne 0) `
+        -Message "Mismatched native targets should fail review."
+    $mismatchOverride = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryMismatch `
+        -ArgumentList @(
+            "-Action", "CheckChanged", "-TargetPythonVersion", "3.8"
+        )
+    Assert-Equal -Expected 0 -Actual $mismatchOverride.ExitCode `
+        -Message "Explicit target should override mismatched config targets."
+    Assert-Equal -Expected $beforeMismatch `
+        -Actual (Get-RepositoryFingerprint -Root $repositoryMismatch) `
+        -Message "Mismatch review changed its repository."
 
     $testOnlyScope = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
@@ -395,7 +487,9 @@ try {
     $testOnlyCheck = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryTests `
-        -ArgumentList @("-Action", "CheckChanged")
+        -ArgumentList @(
+            "-Action", "CheckChanged", "-TargetPythonVersion", "3.11"
+        )
     Assert-Equal -Expected 0 -Actual $testOnlyCheck.ExitCode `
         -Message (
             "Test-only CheckChanged should pass without Pylint.`n" +
@@ -428,7 +522,9 @@ try {
     $mixedCheck = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryTests `
-        -ArgumentList @("-Action", "CheckChanged")
+        -ArgumentList @(
+            "-Action", "CheckChanged", "-TargetPythonVersion", "3.11"
+        )
     Assert-Equal -Expected 0 -Actual $mixedCheck.ExitCode `
         -Message "Mixed production/test CheckChanged should pass."
     Assert-True `
@@ -451,7 +547,9 @@ try {
     $productionPylintFailure = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryTests `
-        -ArgumentList @("-Action", "CheckChanged")
+        -ArgumentList @(
+            "-Action", "CheckChanged", "-TargetPythonVersion", "3.11"
+        )
     Assert-True -Condition ($productionPylintFailure.ExitCode -ne 0) `
         -Message "A production Pylint failure should fail CheckChanged."
     Assert-True `
@@ -465,7 +563,9 @@ try {
     $testRuffFailure = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryTests `
-        -ArgumentList @("-Action", "CheckChanged")
+        -ArgumentList @(
+            "-Action", "CheckChanged", "-TargetPythonVersion", "3.11"
+        )
     Assert-True -Condition ($testRuffFailure.ExitCode -ne 0) `
         -Message "A test Ruff failure should fail CheckChanged."
     Assert-True `
@@ -483,7 +583,9 @@ try {
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryTests `
         -ArgumentList @(
-            "-Action", "FixExplicit", "-PythonFile", "tests/test_fix_me.py"
+            "-Action", "FixExplicit",
+            "-TargetPythonVersion", "3.11",
+            "-PythonFile", "tests/test_fix_me.py"
         )
     Assert-Equal -Expected 0 -Actual $testFix.ExitCode `
         -Message "FixExplicit should format a test-only scope."
@@ -536,7 +638,11 @@ try {
     $committedFix = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryA `
-        -ArgumentList @("-Action", "FixExplicit", "-PythonFile", "committed.py")
+        -ArgumentList @(
+            "-Action", "FixExplicit",
+            "-TargetPythonVersion", "3.11",
+            "-PythonFile", "committed.py"
+        )
     Assert-True -Condition ($committedFix.ExitCode -ne 0) `
         -Message "FixExplicit should reject committed Python."
     Assert-True -Condition $committedFix.Output.Contains("not in the current Python change set") `
@@ -546,7 +652,9 @@ try {
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryA `
         -ArgumentList @(
-            "-Action", "FixExplicit", "-PythonFile", (Join-Path $repositoryB "other.py")
+            "-Action", "FixExplicit",
+            "-TargetPythonVersion", "3.11",
+            "-PythonFile", (Join-Path $repositoryB "other.py")
         )
     Assert-True -Condition ($crossRepositoryFix.ExitCode -ne 0) `
         -Message "FixExplicit should reject a file from another repository."
@@ -554,7 +662,11 @@ try {
     $directoryFix = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryA `
-        -ArgumentList @("-Action", "FixExplicit", "-PythonFile", ".")
+        -ArgumentList @(
+            "-Action", "FixExplicit",
+            "-TargetPythonVersion", "3.11",
+            "-PythonFile", "."
+        )
     Assert-True -Condition ($directoryFix.ExitCode -ne 0) `
         -Message "FixExplicit should reject a directory."
 
@@ -568,12 +680,62 @@ try {
         -Actual (Get-RepositoryFingerprint -Root $repositoryB) `
         -Message "Read-only actions changed repository B."
 
+    $compatibilityFixture = (
+        "`"`"`"Target-version compatibility fixture.`"`"`"`n`n" +
+        "from typing import Tuple, cast`n`n" +
+        "VALUE = cast(Tuple[int, ...], (1,))`n"
+    )
+    Write-Utf8Text -Path (Join-Path $repositoryA "compat_py38.py") `
+        -Value $compatibilityFixture
+    $compatibilityFix = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryA `
+        -ArgumentList @(
+            "-Action", "FixExplicit",
+            "-TargetPythonVersion", "3.8",
+            "-PythonFile", "compat_py38.py"
+        )
+    Assert-Equal -Expected 0 -Actual $compatibilityFix.ExitCode `
+        -Message "Python 3.8 compatibility FixExplicit should pass."
+    Assert-True `
+        -Condition $compatibilityFix.Output.Contains("RESCUEBENCH_RUFF_TARGET_VERSION=py38") `
+        -Message "FixExplicit did not report the Python 3.8 Ruff target."
+    $compatibilityContent = [System.IO.File]::ReadAllText(
+        (Join-Path $repositoryA "compat_py38.py")
+    )
+    Assert-True -Condition $compatibilityContent.Contains("Tuple[int, ...]") `
+        -Message "Ruff changed typing.Tuple for a Python 3.8 target."
+    Assert-True -Condition (-not $compatibilityContent.Contains("tuple[int, ...]")) `
+        -Message "Ruff introduced a PEP 585 generic for a Python 3.8 target."
+    Remove-Item -LiteralPath (Join-Path $repositoryA "compat_py38.py") -Force
+
+    Write-Utf8Text -Path (Join-Path $repositoryA "compat_py311.py") `
+        -Value $compatibilityFixture
+    $modernFix = Invoke-HelperProcess `
+        -WorkspaceRoot $workspaceRoot `
+        -RepositoryPath $repositoryA `
+        -ArgumentList @(
+            "-Action", "FixExplicit",
+            "-TargetPythonVersion", "3.11",
+            "-PythonFile", "compat_py311.py"
+        )
+    Assert-Equal -Expected 0 -Actual $modernFix.ExitCode `
+        -Message "Python 3.11 FixExplicit should pass."
+    $modernContent = [System.IO.File]::ReadAllText(
+        (Join-Path $repositoryA "compat_py311.py")
+    )
+    Assert-True -Condition $modernContent.Contains("tuple[int, ...]") `
+        -Message "Ruff did not apply the Python 3.11 PEP 585 upgrade."
+    Remove-Item -LiteralPath (Join-Path $repositoryA "compat_py311.py") -Force
+
     Write-Utf8Text -Path (Join-Path $repositoryA "bad.py") `
         -Value "`"`"`"Bad whitespace fixture.`"`"`"   `n"
     $badWhitespace = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryA `
-        -ArgumentList @("-Action", "CheckChanged")
+        -ArgumentList @(
+            "-Action", "CheckChanged", "-TargetPythonVersion", "3.11"
+        )
     Assert-True -Condition ($badWhitespace.ExitCode -ne 0) `
         -Message "Untracked trailing whitespace should fail CheckChanged."
     Assert-True `
@@ -586,7 +748,11 @@ try {
     $fix = Invoke-HelperProcess `
         -WorkspaceRoot $workspaceRoot `
         -RepositoryPath $repositoryA `
-        -ArgumentList @("-Action", "FixExplicit", "-PythonFile", "fix_me.py")
+        -ArgumentList @(
+            "-Action", "FixExplicit",
+            "-TargetPythonVersion", "3.11",
+            "-PythonFile", "fix_me.py"
+        )
     Assert-Equal -Expected 0 -Actual $fix.ExitCode `
         -Message "FixExplicit should accept a changed file in the selected repository."
     $fixedContent = [System.IO.File]::ReadAllText(

@@ -29,6 +29,11 @@ force fragmentation of cohesive code. Use `code-design` when excess size,
 branching, arguments, or coupling exposes a natural responsibility boundary.
 Use `inconclusive` when both explanations remain plausible.
 
+A static target version that conflicts with the selected code's authoritative
+runtime requirement is `parameter-design`. Correct or explicitly override the
+review target before changing production structure in response to findings or
+automatic fixes produced for the wrong version.
+
 Classification controls the next repair decision, not the tool result. A failed
 Pylint run remains failed regardless of classification:
 

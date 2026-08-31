@@ -14,6 +14,9 @@ Keep checked, changed, and unverified evidence separate. Include:
 - review action and exact Python scope;
 - staged, unstaged, untracked, and committed status as applicable;
 - Python, Ruff, and Pylint versions;
+- the toolchain Python version, effective static target Python version, and the
+  target source (`explicit`, repository config, or workspace config);
+- the effective Ruff and Pylint target-version arguments;
 - Ruff lint and Ruff format-check results for the complete Python scope;
 - the production-only Pylint scope, executed result, and number of test Python
   files skipped by policy;
@@ -28,6 +31,11 @@ Keep checked, changed, and unverified evidence separate. Include:
 - confirmation that committed history and other repositories were not reviewed
   during an ordinary independent-repository pass;
 - boundaries not reviewed or not runtime-verified.
+
+The static target controls version-sensitive Ruff and Pylint behavior but does
+not switch the Conda interpreter. State separately whether focused checks ran
+under the real target interpreter. Never turn a static `3.8` target into a claim
+that Python 3.8 imported or executed the code.
 
 If the scope is empty, say that checks were skipped. Do not substitute a full
 audit. If a tool is missing or output is undecodable, report the exact boundary
