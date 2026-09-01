@@ -209,7 +209,11 @@ exit 0
 
     'Run' {
         Require-Value -Name 'Command' -Value $Command
-        & ssh @sshOptions $Alias $Command
+
+        $commandBase64 = ConvertTo-Utf8Base64 -Value $Command
+        $remoteLauncher = "printf '%s' '$commandBase64' | base64 -d | bash"
+
+        & ssh @sshOptions $Alias $remoteLauncher
         if ($LASTEXITCODE -ne 0) {
             throw "Remote command failed with exit code $LASTEXITCODE."
         }

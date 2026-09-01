@@ -49,6 +49,12 @@ powershell -ExecutionPolicy Bypass -File <skill-dir>\scripts\autodl-remote.ps1 `
   -Action Download -RemotePath <remote-path> -LocalPath <local-path> [-Recursive]
 ```
 
+The wrapper supports Windows PowerShell 5.1. For `Run`, pass the intended Bash
+command as one PowerShell string. The wrapper UTF-8 Base64-encodes the complete
+command before invoking OpenSSH, so nested quotes, pipes, newlines, and non-ASCII
+text are not rewritten by Windows native-argument handling. Do not pre-encode
+the command or add SSH-specific escaping in the caller.
+
 `Probe` reports the current identity, OS, GPU and CUDA state, base Python/PyTorch and Conda state, remote job tools, storage mounts, and top-level data-disk directories. Treat reported `missing` values as findings to inspect; the probe never installs or repairs them.
 
 The wrapper enforces public-key-only authentication. Never pass or store an SSH password.
