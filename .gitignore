@@ -1,6 +1,6 @@
 /repos/
 /tmp/
-
+/datasets/
 
 *.pth
 *.pyc
